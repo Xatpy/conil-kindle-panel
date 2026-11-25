@@ -184,7 +184,7 @@ def render(snapshot, now=None):
         observed = datetime.fromtimestamp(current["time"], TZ)
         stale = now.timestamp() - current["time"] > 7200
         text(56, 318, "PREVISIÓN METEOROLÓGICA" + (" · ANTIGUA" if stale else ""), 23, True)
-        text(52, 348, f"{current['temperature_2m']:.0f}°", 140, True)
+        text(52, 348, f"{current['temperature_2m']:.0f}°", 128, True)
         text(310, 369, weather_label(current.get("weather_code")), 36, True)
         text(312, 425, f"Sensación {current['apparent_temperature']:.0f}° · Datos {observed:%H:%M}", 27)
         degrees = current["wind_direction_10m"]

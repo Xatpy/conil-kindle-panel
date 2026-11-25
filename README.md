@@ -6,6 +6,10 @@ No sustituye una carta náutica ni una observación del nivel real del mar.
 
 ## Versión alojada en GitHub Pages
 
+[Ver panel](https://xatpy.github.io/conil-kindle-panel/) ·
+[PNG para el Kindle](https://xatpy.github.io/conil-kindle-panel/conil.png) ·
+[Estado de las actualizaciones](https://github.com/Xatpy/conil-kindle-panel/actions)
+
 La imagen se genera con GitHub Actions a los minutos 17 y 47 de cada hora y se
 publica como `conil.png` en GitHub Pages. El Kindle sigue descargándola solamente
 al entrar en reposo. La previsión puede tener unos 30 minutos de antigüedad,
@@ -21,6 +25,15 @@ GitHub puede retrasar ejecuciones programadas. También deshabilita las tareas
 programadas de repositorios públicos después de 60 días sin actividad: si ocurre,
 reactiva el workflow en Actions. Comprueba la fecha del panel cuando lo consultes.
 No se añaden commits artificiales para eludir esa limitación.
+
+Para conectar el Kindle a la versión pública, con KOReader cerrado y el USB conectado:
+
+```sh
+python install.py --url https://xatpy.github.io/conil-kindle-panel/conil.png --configure-sleep
+```
+
+Después expulsa el Kindle y abre KOReader. La descarga HTTPS usa la pila de red
+de KOReader; si falla, conserva la última imagen y deja un aviso `conil:` en su log.
 
 ## Primera prueba en el Mac
 
