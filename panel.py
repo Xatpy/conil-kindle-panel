@@ -20,6 +20,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw, ImageFont
+from PIL.PngImagePlugin import PngInfo
+from stoic import quote_for
 
 HERE = Path(__file__).resolve().parent
 TZ = ZoneInfo("Europe/Madrid")
@@ -60,9 +62,8 @@ def parse_tides(html):
 def fetch_weather():
     params = {
         "latitude": 36.2772, "longitude": -6.0885,
-        "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m",
-        "hourly": "temperature_2m,precipitation_probability,weather_code",
-        "daily": "temperature_2m_max,temperature_2m_min,sunrise,sunset",
+        "hourly": "temperature_2m,precipitation_probability,wind_speed_10m,wind_direction_10m",
+        "daily": "temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,sunrise,sunset",
         "timezone": "Europe/Madrid", "timeformat": "unixtime", "forecast_days": 3,
         "wind_speed_unit": "kmh",
     }
@@ -71,12 +72,8 @@ def fetch_weather():
 
 
 def validate_weather(data):
-    current = data["current"]
-    for key in ("time", "temperature_2m", "apparent_temperature", "weather_code", "wind_speed_10m", "wind_direction_10m"):
-        if not isinstance(current.get(key), (int, float)) or not math.isfinite(current[key]):
-            raise ValueError("Open-Meteo: dato ausente o inválido: " + key)
-    for section, fields in (("hourly", ("temperature_2m", "precipitation_probability")),
-                            ("daily", ("temperature_2m_min", "temperature_2m_max", "sunrise", "sunset"))):
+    for section, fields in (("hourly", ("temperature_2m", "precipitation_probability", "wind_speed_10m", "wind_direction_10m")),
+                            ("daily", ("temperature_2m_min", "temperature_2m_max", "weather_code", "precipitation_probability_max", "sunrise", "sunset"))):
         times = data[section]["time"]
         if not times or not all(isinstance(ts, (int, float)) and math.isfinite(ts) for ts in times):
             raise ValueError("Open-Meteo: horas inválidas")
@@ -84,11 +81,34 @@ def validate_weather(data):
             values = data[section][field]
             if len(values) != len(times):
                 raise ValueError("Open-Meteo: serie incompleta")
-            if field != "precipitation_probability" and not all(isinstance(v, (int, float)) and math.isfinite(v) for v in values):
+            if not field.startswith("precipitation_probability") and not all(isinstance(v, (int, float)) and math.isfinite(v) for v in values):
                 raise ValueError("Open-Meteo: valores incompletos")
-            if field == "precipitation_probability" and not all(v is None or isinstance(v, (int, float)) and math.isfinite(v) for v in values):
+            if field.startswith("precipitation_probability") and not all(v is None or isinstance(v, (int, float)) and math.isfinite(v) for v in values):
                 raise ValueError("Open-Meteo: precipitación inválida")
     return data
+
+
+def direction(degrees):
+    return ["N", "NE", "E", "SE", "S", "SO", "O", "NO"][int((degrees + 22.5) // 45) % 8]
+
+
+def daily_forecast(data, day):
+    try:
+        validate_weather(data)
+        d = data["daily"]; h = data["hourly"]
+        i = next(i for i, ts in enumerate(d["time"]) if datetime.fromtimestamp(ts, TZ).date() == day)
+        slots = []
+        for hour in (9, 12, 15, 18):
+            j = next(j for j, ts in enumerate(h["time"]) if datetime.fromtimestamp(ts, TZ).date() == day and datetime.fromtimestamp(ts, TZ).hour == hour)
+            slots.append({"hour": hour, "temperature": h["temperature_2m"][j],
+                          "rain": h["precipitation_probability"][j],
+                          "wind": h["wind_speed_10m"][j], "direction": direction(h["wind_direction_10m"][j])})
+        return {"low": d["temperature_2m_min"][i], "high": d["temperature_2m_max"][i],
+                "label": weather_label(d["weather_code"][i]), "rain": d["precipitation_probability_max"][i],
+                "sunrise": datetime.fromtimestamp(d["sunrise"][i], TZ),
+                "sunset": datetime.fromtimestamp(d["sunset"][i], TZ), "slots": slots}
+    except (KeyError, TypeError, ValueError, StopIteration):
+        return None
 
 
 def fetch_tides(now):
@@ -160,6 +180,27 @@ def font(size, bold=False):
     raise RuntimeError("Instala DejaVu Sans o define CONIL_FONT y CONIL_FONT_BOLD")
 
 
+def wrap_text(value, face, width):
+    lines = []; current = ""
+    for word in value.split():
+        if face.getlength(word) > width: raise ValueError("Palabra demasiado ancha")
+        candidate = (current + " " + word).strip()
+        if current and face.getlength(candidate) > width:
+            lines.append(current); current = word
+        else: current = candidate
+    if current: lines.append(current)
+    return lines
+
+
+def png_bytes(image):
+    metadata = PngInfo()
+    for key in ("ConilDate", "ConilGeneratedAt"):
+        if key in image.info: metadata.add_text(key, image.info[key])
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG", optimize=True, pnginfo=metadata)
+    return buffer.getvalue()
+
+
 def render(snapshot, now=None):
     now = (now or datetime.now(TZ)).astimezone(TZ)
     image = Image.new("L", SIZE, 255)
@@ -173,38 +214,41 @@ def render(snapshot, now=None):
 
     text(56, 45, "CONIL", 92, True)
     text(60, 150, "DE LA FRONTERA · CÁDIZ", 24)
-    text(60, 200, f"{DAYS[now.weekday()].capitalize()}, {now.day} de {MONTHS[now.month-1]}", 32)
-    text(60, 245, f"Panel generado · {now:%d/%m/%Y %H:%M} ({now.tzname()})", 23)
+    text(60, 200, f"{DAYS[now.weekday()].capitalize()}, {now.day} de {MONTHS[now.month-1]}", 30)
+    text(60, 245, f"BOLETÍN DIARIO · {now:%d/%m/%Y}", 21)
+    quote = quote_for(now.date())
+    text(580, 49, "UNA IDEA PARA HOY", 17, True)
+    quote_lines = wrap_text(quote["text"], font(26), 436)
+    if len(quote_lines) > 4: raise ValueError("La frase no cabe en la cabecera")
+    for i, line in enumerate(quote_lines): text(580, 84 + i * 33, line, 26)
+    author_y = 84 + len(quote_lines) * 33 + 10
+    text(580, author_y, quote["author"] + " · " + quote["reference"], 16)
+    text(580, author_y + 25, "Versión libre", 15, fill=95)
+    image.info["ConilDate"] = now.date().isoformat()
+    image.info["ConilGeneratedAt"] = now.isoformat()
     rule(291)
 
     weather = snapshot.get("weather")
     warnings = []
-    if weather:
-        w = weather["value"]; current = w["current"]
-        observed = datetime.fromtimestamp(current["time"], TZ)
-        stale = now.timestamp() - current["time"] > 7200
-        text(56, 318, "PREVISIÓN METEOROLÓGICA" + (" · ANTIGUA" if stale else ""), 23, True)
-        text(52, 348, f"{current['temperature_2m']:.0f}°", 128, True)
-        text(310, 369, weather_label(current.get("weather_code")), 36, True)
-        text(312, 425, f"Sensación {current['apparent_temperature']:.0f}° · Datos {observed:%H:%M}", 27)
-        degrees = current["wind_direction_10m"]
-        direction = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"][int((degrees + 22.5) // 45) % 8]
-        text(58, 520, f"VIENTO  {direction} · {current['wind_speed_10m']:.0f} km/h", 32, True)
-        d = w["daily"]
-        index = next((i for i, ts in enumerate(d["time"]) if datetime.fromtimestamp(ts, TZ).date() == now.date()), None)
-        if index is not None:
-            rise = datetime.fromtimestamp(d["sunrise"][index], TZ)
-            sunset = datetime.fromtimestamp(d["sunset"][index], TZ)
-            text(58, 575, f"Hoy {d['temperature_2m_min'][index]:.0f}° / {d['temperature_2m_max'][index]:.0f}°   ·   Sol {rise:%H:%M} — {sunset:%H:%M}", 29)
-        h = w["hourly"]
-        indexes = [i for i, ts in enumerate(h["time"]) if ts >= now.timestamp()][::3][:4]
-        for column, i in enumerate(indexes):
+    forecast = daily_forecast(weather["value"], now.date()) if weather else None
+    if forecast:
+        stale = now.timestamp() - weather["fetched"] > 36 * 3600
+        text(56, 318, "PREVISIÓN DEL DÍA" + (" · EDICIÓN ANTIGUA" if stale else ""), 23, True)
+        text(52, 350, f"{forecast['low']:.0f}° / {forecast['high']:.0f}°", 100, True)
+        text(58, 475, "MÍNIMA / MÁXIMA", 23)
+        text(615, 376, forecast["label"], 32, True)
+        rain = forecast["rain"]
+        text(617, 432, f"Lluvia: {rain:.0f}%" if rain is not None else "Lluvia: —", 27)
+        text(58, 534, f"SOL  {forecast['sunrise']:%H:%M} — {forecast['sunset']:%H:%M}", 30, True)
+        text(58, 594, "TEMPERATURA · PROBABILIDAD DE LLUVIA · VIENTO", 21)
+        for column, slot in enumerate(forecast["slots"]):
             x = 170 + column * 242
-            centered(x, 650, datetime.fromtimestamp(h["time"][i], TZ).strftime("%H:%M"), 26)
-            centered(x, 691, f"{h['temperature_2m'][i]:.0f}°", 40, True)
-            rain = h["precipitation_probability"][i]
-            centered(x, 746, f"Lluvia {rain:.0f}%" if rain is not None else "Lluvia —", 24)
-        if stale: warnings.append("Tiempo sin actualizar: consulta la hora de los datos.")
+            centered(x, 642, f"{slot['hour']:02d}:00", 26)
+            centered(x, 683, f"{slot['temperature']:.0f}°", 40, True)
+            rain = slot["rain"]
+            centered(x, 736, f"{rain:.0f}% lluvia" if rain is not None else "Lluvia —", 22)
+            centered(x, 774, f"{slot['direction']} {slot['wind']:.0f} km/h", 22)
+        if stale: warnings.append("Previsión antigua: revisa la fecha de edición.")
     else:
         text(58, 370, "Tiempo no disponible", 44, True)
         text(58, 440, "Se actualizará cuando vuelva la conexión.", 28)
@@ -215,15 +259,7 @@ def render(snapshot, now=None):
     if tide:
         t = tide["value"]
         events = local_events(t, now.date())
-        future = [e for e in t["events"] if e[0] > now.timestamp()]
-        if future and events:
-            nxt = future[0]
-            state = "Subiendo" if nxt[2] == "pleamar" else "Bajando"
-            at = datetime.fromtimestamp(nxt[0], TZ)
-            day_label = "mañana " if at.date() > now.date() else ""
-            text(58, 882, f"{state} · próxima {nxt[2]} {day_label}{at:%H:%M}", 30)
-        else:
-            text(58, 882, "Sin predicción para este día", 30)
+        text(58, 882, "Pleamares y bajamares · horas locales" if events else "Sin predicción para este día", 30)
         start = datetime.combine(now.date(), datetime.min.time(), TZ).timestamp()
         end = datetime.combine(now.date()+timedelta(days=1), datetime.min.time(), TZ).timestamp()
         points = [(ts, height) for ts, height in t["series"] if start <= ts <= end]
@@ -237,9 +273,6 @@ def render(snapshot, now=None):
                 draw.line((x, 961, x, 1135), fill=210, width=1)
                 centered(x, 1143, f"{hour:02d}h", 22)
             draw.line([xy(ts, height) for ts, height in points], fill=0, width=4)
-            if start <= now.timestamp() <= end:
-                x, _ = xy(now.timestamp(), low)
-                draw.line((x, 948, x, 1135), fill=100, width=2)
         for i, event in enumerate(events[:5]):
             at = datetime.fromtimestamp(event[0], TZ)
             x = 60 + i * (960 / max(4, len(events)))
@@ -259,7 +292,7 @@ def render(snapshot, now=None):
 def save_png(image, path):
     path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(".tmp")
-    image.save(temp, format="PNG", optimize=True)
+    temp.write_bytes(png_bytes(image))
     temp.replace(path)
 
 
@@ -272,14 +305,16 @@ def serve(store, host, port):
             if path == "/health":
                 data = json.dumps({"sources": list(store.snapshot())}).encode(); kind = "application/json"
             else:
-                buffer = io.BytesIO(); render(store.snapshot()).save(buffer, format="PNG", optimize=True)
-                data = buffer.getvalue(); kind = "image/png"
+                data = png_bytes(render(store.snapshot())); kind = "image/png"
             self.send_response(200); self.send_header("Content-Type", kind)
             self.send_header("Cache-Control", "no-store"); self.send_header("Content-Length", str(len(data)))
             self.end_headers(); self.wfile.write(data)
     stop = threading.Event()
     def updater():
-        while not stop.wait(900): store.refresh()
+        while not stop.wait(900):
+            today = datetime.now(TZ).date()
+            if any(datetime.fromtimestamp(store.snapshot().get(name, {}).get("fetched", 0), TZ).date() != today for name in ("weather", "tides")):
+                store.refresh()
     thread = threading.Thread(target=updater, daemon=True); thread.start()
     server = ThreadingHTTPServer((host, port), Handler)
     LOG.info("Panel disponible en http://%s:%s/conil.png", host, port)

@@ -1,7 +1,8 @@
 # Conil en el Kindle
 
-Panel para un Kindle Paperwhite 4 (1072 × 1448): previsión de Conil de la Frontera,
-viento, próximas horas, salida/puesta de sol y mareas del puerto de Conil.
+Boletín diario para un Kindle Paperwhite 4 (1072 × 1448): previsión de Conil de la
+Frontera, mínimas/máximas, lluvia y viento a las 09, 12, 15 y 18, salida/puesta de sol,
+mareas del día y una reflexión estoica en la cabecera.
 No sustituye una carta náutica ni una observación del nivel real del mar.
 
 ## Versión alojada en GitHub Pages
@@ -10,11 +11,13 @@ No sustituye una carta náutica ni una observación del nivel real del mar.
 [PNG para el Kindle](https://xatpy.github.io/conil-kindle-panel/conil.png) ·
 [Estado de las actualizaciones](https://github.com/Xatpy/conil-kindle-panel/actions)
 
-La imagen se genera con GitHub Actions a los minutos 17 y 47 de cada hora y se
-publica como `conil.png` en GitHub Pages. El Kindle sigue descargándola solamente
-al entrar en reposo. La previsión puede tener unos 30 minutos de antigüedad,
-además de retrasos de Actions y la caché de Pages; la hora de generación permanece
-visible. Una consulta fallida impide publicar y mantiene el despliegue anterior.
+La imagen se genera con GitHub Actions una vez por la mañana, a las 05:17 UTC
+(06:17 en invierno, 07:17 en verano, hora de Conil), y se publica como `conil.png`
+en GitHub Pages. Los cambios de código y las ejecuciones manuales también publican.
+El Kindle la descarga al entrar en reposo, como máximo una vez por día de Conil
+con descarga válida. Se mantiene la fecha de edición visible. No hay temperatura
+«actual», estado «subiendo/bajando» ni marca de «ahora» en la curva.
+Una consulta fallida impide publicar y mantiene el despliegue anterior.
 
 Este modo funciona con el Mac apagado, siempre que el Kindle tenga Wi-Fi con
 acceso a Internet. La URL de la imagen es pública y solo contiene información
@@ -48,8 +51,9 @@ python3 -m venv .venv
 ```
 
 Abre `http://IP_DEL_MAC:8789/conil.png` desde el iPhone en la misma Wi-Fi.
-El Mac debe permanecer encendido y accesible. El servidor consulta las fuentes
-cada 15 minutos y entrega la imagen desde memoria; no descarga datos por cada petición
+El Mac debe permanecer encendido y accesible. El servidor comprueba la fecha de los datos
+cada 15 minutos y solo consulta las fuentes al cambiar el día o cuando faltan datos;
+entrega la imagen desde memoria y no descarga datos por cada petición
 del Kindle. El cortafuegos puede solicitar acceso a la red local para Python.
 Para exponer el servicio fuera de la red local, usa un alojamiento con HTTPS;
 no abras el puerto del router. Este proyecto no contrata ni publica alojamiento.
@@ -59,9 +63,16 @@ En Linux instala la fuente DejaVu Sans. También puedes indicar las fuentes con
 
 ## Pantalla de reposo de KOReader
 
-Esta primera versión **solo actualiza al entrar en reposo**, con Wi-Fi ya conectado.
+El hook **solo actualiza al entrar en reposo**, con Wi-Fi ya conectado.
 No enciende Wi-Fi, no programa despertares y no cambia el salvapantallas del Kindle
 normal. Sin red conserva la última imagen: su fecha permanece visible.
+Después de una descarga válida conserva un marcador con la fecha de Conil y la URL
+en `koreader/conil.png.last-update`. Las siguientes entradas en reposo de ese día
+no hacen peticiones. Un fallo de red, imagen inválida o edición de otro día no marca
+el día como completado: se reintenta en una entrada posterior en reposo.
+Así, descargar antes de que esté lista la edición matinal no bloquea el resto del día.
+El PNG lleva su fecha en metadatos `ConilDate`; el hook verifica esos metadatos antes
+de reemplazar la imagen. El calendario local contempla el horario de verano de Madrid.
 La descarga puede retrasar el reposo hasta unos cinco segundos; la resolución DNS
 del sistema puede tardar más, por lo que para la prueba local conviene usar la IP.
 
@@ -89,16 +100,18 @@ las APIs de KOReader 2026.07.1 y se ha probado en un Paperwhite 4 con firmware
 
 Para desinstalar, borra `koreader/patches/2-conil-sleepscreen.lua` y
 `koreader/settings/conil-config.lua`, reinicia KOReader y elige otra pantalla de reposo.
-Puedes borrar `koreader/conil.png`. Si recuperas una copia de ajustes, perderás
+Puedes borrar `koreader/conil.png` y `koreader/conil.png.last-update`. Si recuperas una copia de ajustes, perderás
 los cambios de configuración hechos desde esa copia: no es necesario restaurarla
 para desinstalar este panel.
 
 ## Fuentes y precisión
 
 - [Open-Meteo](https://open-meteo.com/en/docs): previsión para 36.2772, −6.0885.
-  No se presenta como una medición de una estación. Un dato con más de dos horas
-  se marca como antiguo. Se muestra la hora del dato por separado de la generación
-  de la imagen. Datos bajo CC BY 4.0, atribuidos en el panel.
+  No se presenta como una medición de una estación: se muestran las predicciones
+  del día y cuatro franjas horarias fijas. Una consulta de más de 36 horas se marca
+  como antigua; si no hay previsión para la fecha del boletín se indica que falta.
+  La fecha de edición y `status.json` permiten comprobar la antigüedad.
+  Datos bajo CC BY 4.0, atribuidos en el panel.
 - [API del Instituto Hidrográfico de la Marina](https://ideihm.covam.es/portal/api-mareas/):
   puerto 46, Conil. Los eventos y la curva se extraen del bloque JSON público
   `datos-marea` de su vista gráfica. Es una interfaz que podría cambiar.
@@ -109,7 +122,16 @@ para desinstalar este panel.
 Cada fuente conserva su última respuesta y fecha independientemente. Si no hay
 mareas del día solicitado, no se muestra una curva de otro día. Las respuestas
 se guardan localmente en `.cache/`; `output/conil.png` es una captura, no se actualiza
-sola al verla como archivo. La URL del servidor sí genera una imagen con la hora actual.
+sola al verla como archivo. La URL local genera el boletín de la fecha actual.
+
+## Reflexión estoica del día
+
+`stoic_quotes.json` contiene 14 versiones libres en español de pasajes de Epicteto,
+Marco Aurelio y Séneca, con obra, referencia y enlace al texto fuente. No se presentan
+como citas literales de una edición española. La selección depende de la fecha de
+Conil: no cambia durante el día, rota cada 14 días y no necesita otra API ni IA.
+Se puede ampliar la colección editando ese JSON. El render verifica que la frase
+y su referencia quepan en el bloque superior derecho.
 
 ## Verificación
 

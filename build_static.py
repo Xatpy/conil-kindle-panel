@@ -5,7 +5,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from panel import HERE, Store, render, save_png
+from panel import HERE, TZ, Store, render, save_png
+from stoic import quote_for
 
 
 def main():
@@ -19,11 +20,14 @@ def main():
     if any(snapshot.get(source, {}).get("fetched", 0) < started - 1 for source in ("weather", "tides")):
         raise SystemExit("No se publica: falta una respuesta nueva de alguna fuente; se conserva el despliegue anterior.")
     args.output.mkdir(parents=True, exist_ok=True)
-    save_png(render(snapshot), args.output / "conil.png")
-    generated = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(TZ)
+    save_png(render(snapshot, now), args.output / "conil.png")
+    generated = now.astimezone(timezone.utc).isoformat()
     status = {
         "generated_at": generated,
-        "weather_data_at": datetime.fromtimestamp(snapshot["weather"]["value"]["current"]["time"], timezone.utc).isoformat(),
+        "valid_date": now.date().isoformat(),
+        "weather_retrieved_at": datetime.fromtimestamp(snapshot["weather"]["fetched"], timezone.utc).isoformat(),
+        "quote": {**quote_for(now.date()), "note": "Versión libre en español, no cita literal"},
         "tides_port": "Conil", "tides_port_id": 46,
     }
     (args.output / "status.json").write_text(json.dumps(status, indent=2) + "\n")
@@ -33,7 +37,7 @@ def main():
 <style>body{margin:0;background:#eee;font-family:system-ui;text-align:center}img{width:100%;max-width:536px;height:auto;background:white}footer{padding:1rem;font-size:.85rem;color:#444}</style>
 <img src="conil.png" alt="Previsión meteorológica y mareas del puerto de Conil de la Frontera">
 <footer>Open-Meteo · Instituto Hidrográfico de la Marina<br>
-Actualizado ''' + html.escape(generated) + ''' · Renovación aproximada cada 30 minutos.<br>
+Actualizado ''' + html.escape(generated) + ''' · Boletín diario, renovado cada mañana.<br>
 <a href="conil.png">Imagen para Kindle</a> · <a href="status.json">Fecha de los datos</a>
 </footer></html>''', encoding="utf-8")
     print(args.output)
